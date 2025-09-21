@@ -1,3 +1,6 @@
+<img width="986" height="622" alt="image" src="https://github.com/user-attachments/assets/ca5a1464-2426-4e03-8356-88f43dbeb2a9" />
+
+
 ```
 git submodule add https://github.com/oscar-wos/RLogger
 dotnet sln .\Plugin.sln add .\RLogger\src\RLogger.csproj
