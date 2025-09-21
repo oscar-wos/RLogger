@@ -139,7 +139,10 @@ public class Logger : IDisposable
                 StreamWriter globalWriter = GetWriter(globalFile);
 
                 specificWriter.WriteLine(logString);
+                specificWriter.Flush();
+
                 globalWriter.WriteLine(logString);
+                globalWriter.Flush();
             }
         }
         catch (Exception ex)
