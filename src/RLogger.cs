@@ -194,7 +194,7 @@ public class Logger : IDisposable
     private static Func<TimeOnly, string> GetTimeFormat(uint accuracy) =>
         accuracy switch
         {
-            <= 9 => date => date.ToString("HH:mm:ss.fff"),
+            <= 9 => time => time.ToString("HH:mm:ss.fff"),
             <= 99 => time => time.ToString("HH:mm:ss.ff"),
             <= 999 => time => time.ToString("HH:mm:ss.f"),
             _ => time => time.ToString("HH:mm:ss"),
