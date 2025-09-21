@@ -7,29 +7,30 @@ namespace RLogger;
 
 public class Logger : IDisposable
 {
-    private static DateTime _cachedTime = DateTime.Now;
-    private static long _cachedTimestamp = Stopwatch.GetTimestamp();
-
     private readonly string _path;
     private readonly ILogger? _logger;
 
     private readonly long _updateInterval;
     private readonly Timer _flushTimer;
+    private readonly Func<TimeOnly, string> _timeFormatter;
 
     private readonly object _logLock = new();
     private readonly Channel<LogEntry> _logChannel = Channel.CreateUnbounded<LogEntry>();
     private readonly Dictionary<string, StreamWriter> _logWriters = [];
 
-    private volatile string _currentDate = _cachedTime.ToString("yyyy-MM-dd");
-    private volatile int _lastDay = _cachedTime.Day;
+    private DateOnly _cachedDate = DateOnly.FromDateTime(DateTime.Now);
+    private string _cachedDateString = DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd");
+    private string _cachedTimeString = TimeOnly.FromDateTime(DateTime.Now).ToString("HH:mm:ss");
+    private long _cachedTimestamp = Stopwatch.GetTimestamp();
 
-    public Logger(string path, ILogger? logger = null, uint accuracy = 1)
+    public Logger(string path, ILogger? logger = null, uint accuracy = 1000)
     {
         _path = path;
         _logger = logger;
 
         _updateInterval = Stopwatch.Frequency / 1000 * accuracy;
         _flushTimer = new Timer(FlushLogs, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+        _timeFormatter = GetTimeFormat(accuracy);
 
         _ = Task.Run(WriteLogs);
     }
@@ -39,7 +40,7 @@ public class Logger : IDisposable
         _logger?.LogDebug(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
-            new LogEntry(GetTimestamp(), LogType.Debug, message, exception)
+            new LogEntry(GetTimeString(), LogType.Debug, message, exception)
         );
     }
 
@@ -48,7 +49,7 @@ public class Logger : IDisposable
         _logger?.LogInformation(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
-            new LogEntry(GetTimestamp(), LogType.Information, message, exception)
+            new LogEntry(GetTimeString(), LogType.Information, message, exception)
         );
     }
 
@@ -57,7 +58,7 @@ public class Logger : IDisposable
         _logger?.LogWarning(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
-            new LogEntry(GetTimestamp(), LogType.Warning, message, exception)
+            new LogEntry(GetTimeString(), LogType.Warning, message, exception)
         );
     }
 
@@ -66,14 +67,14 @@ public class Logger : IDisposable
         _logger?.LogError(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
-            new LogEntry(GetTimestamp(), LogType.Error, message, exception)
+            new LogEntry(GetTimeString(), LogType.Error, message, exception)
         );
     }
 
     public Exception Critical(string message, Exception? exception = null)
     {
         _ = _logChannel.Writer.TryWrite(
-            new LogEntry(GetTimestamp(), LogType.Critical, message, exception)
+            new LogEntry(GetTimeString(), LogType.Critical, message, exception)
         );
 
         FlushLogs(null);
@@ -99,17 +100,26 @@ public class Logger : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private DateTime GetTimestamp()
+    private string GetTimeString()
     {
         long currentTimestamp = Stopwatch.GetTimestamp();
 
         if (currentTimestamp - _cachedTimestamp > _updateInterval)
         {
-            _cachedTime = DateTime.Now;
+            DateTime dateTime = DateTime.Now;
+            DateOnly date = DateOnly.FromDateTime(dateTime);
+
+            if (_cachedDate != date)
+            {
+                _cachedDate = date;
+                _cachedDateString = date.ToString("yyyy-MM-dd");
+            }
+
+            _cachedTimeString = _timeFormatter(TimeOnly.FromDateTime(dateTime));
             _cachedTimestamp = currentTimestamp;
         }
 
-        return _cachedTime;
+        return _cachedTimeString;
     }
 
     private async Task WriteLogs()
@@ -120,19 +130,18 @@ public class Logger : IDisposable
         }
     }
 
-    private void WriteLog(DateTime timestamp, LogType type, string message, Exception? exception)
+    private void WriteLog(string timestamp, LogType type, string message, Exception? exception)
     {
         try
         {
             lock (_logLock)
             {
-                string dateString = FormatDate(timestamp);
                 string logString = FormatLog(timestamp, type, message, exception);
 
-                string specificFile = $"{dateString}_{type}.log";
+                string specificFile = $"{_cachedDateString}_{type}.log";
                 StreamWriter specificWriter = GetWriter(specificFile);
 
-                string globalFile = $"{dateString}_All.log";
+                string globalFile = $"{_cachedDateString}_All.log";
                 StreamWriter globalWriter = GetWriter(globalFile);
 
                 specificWriter.WriteLine(logString);
@@ -174,24 +183,22 @@ public class Logger : IDisposable
         return _logWriters[fileName];
     }
 
-    private string FormatDate(DateTime timestamp)
-    {
-        if (timestamp.Day != _lastDay)
-        {
-            _currentDate = timestamp.ToString("yyyy-MM-dd");
-            _lastDay = timestamp.Day;
-        }
-
-        return _currentDate;
-    }
-
-    private static string FormatLog(
-        DateTime timestamp,
+    private string FormatLog(
+        string timestamp,
         LogType type,
         string message,
         Exception? exception
     ) =>
-        $"[{timestamp:yyyy-MM-dd HH:mm:ss.fff}] [{type}] {message}{(exception is { } ? $"\n{exception}" : "")}";
+        $"[{_cachedDateString} {timestamp}] [{type}] {message}{(exception is { } ? $"\n{exception}" : "")}";
 
-    private record LogEntry(DateTime Timestamp, LogType Type, string Message, Exception? Exception);
+    private static Func<TimeOnly, string> GetTimeFormat(uint accuracy) =>
+        accuracy switch
+        {
+            <= 9 => date => date.ToString("HH:mm:ss.fff"),
+            <= 99 => time => time.ToString("HH:mm:ss.ff"),
+            <= 999 => time => time.ToString("HH:mm:ss.f"),
+            _ => time => time.ToString("HH:mm:ss"),
+        };
+
+    private record LogEntry(string Timestamp, LogType Type, string Message, Exception? Exception);
 }
