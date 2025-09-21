@@ -15,15 +15,25 @@ private Logger? _logger;
 public override void Load(bool hotReload)
 {
     string logPath = Path.Join(Server.GameDirectory, "csgo", "logs", "Plugin");
-    _logger = new(logPath, Logger);
+    
+    // Will only output to files
+    _logger = new Logger(logPath);
+
+    // Will output to files & console
+    // CounterStrikeSharp - BasePlugin.Logger
+    _logger = new Logger(logPath, logger: Logger);
+
+    // Changes how often in ms to update DateTime timestamp
+    _logger = new Logger(logPath, accuracy: 1);
 }
 
 private void Log()
 {
-    _logger.Debug();
-    _logger.Information();
-    _logger.Warning();
-    _logger.Error();
+    _logger.Debug("Debug");
+    _logger.Information("Information");
+    _logger.Warning("Warning");
+    _logger.Error("Error");
+    throw _logger.Critical("Critical");
 }
 
 private void ExceptionLog()

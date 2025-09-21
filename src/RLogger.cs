@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
@@ -8,32 +7,36 @@ namespace RLogger;
 
 public class Logger : IDisposable
 {
+    private static DateTime _cachedTime = DateTime.Now;
+    private static long _cachedTimestamp = Stopwatch.GetTimestamp();
+
     private readonly string _path;
-    private readonly ILogger _logger;
+    private readonly ILogger? _logger;
+
     private readonly long _updateInterval;
+    private readonly Timer _flushTimer;
 
     private readonly object _logLock = new();
     private readonly Channel<LogEntry> _logChannel = Channel.CreateUnbounded<LogEntry>();
-    private readonly ConcurrentDictionary<string, StreamWriter> _logWriters = [];
-
-    private static DateTime _cachedTime = DateTime.Now;
-    private static long _cachedTimestamp = Stopwatch.GetTimestamp();
+    private readonly Dictionary<string, StreamWriter> _logWriters = [];
 
     private volatile string _currentDate = _cachedTime.ToString("yyyy-MM-dd");
     private volatile int _lastDay = _cachedTime.Day;
 
-    public Logger(string path, ILogger logger, uint accuracy = 1)
+    public Logger(string path, ILogger? logger = null, uint accuracy = 1)
     {
         _path = path;
         _logger = logger;
-        _updateInterval = Stopwatch.Frequency / (1000 / accuracy);
+
+        _updateInterval = Stopwatch.Frequency / 1000 * accuracy;
+        _flushTimer = new Timer(FlushLogs, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
 
         _ = Task.Run(WriteLogs);
     }
 
     public void Debug(string message, Exception? exception = null)
     {
-        _logger.LogDebug(exception, "{message}", message);
+        _logger?.LogDebug(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
             new LogEntry(GetTimestamp(), LogType.Debug, message, exception)
@@ -42,7 +45,7 @@ public class Logger : IDisposable
 
     public void Information(string message, Exception? exception = null)
     {
-        _logger.LogInformation(exception, "{message}", message);
+        _logger?.LogInformation(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
             new LogEntry(GetTimestamp(), LogType.Information, message, exception)
@@ -51,7 +54,7 @@ public class Logger : IDisposable
 
     public void Warning(string message, Exception? exception = null)
     {
-        _logger.LogWarning(exception, "{message}", message);
+        _logger?.LogWarning(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
             new LogEntry(GetTimestamp(), LogType.Warning, message, exception)
@@ -60,7 +63,7 @@ public class Logger : IDisposable
 
     public void Error(string message, Exception? exception = null)
     {
-        _logger.LogError(exception, "{message}", message);
+        _logger?.LogError(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
             new LogEntry(GetTimestamp(), LogType.Error, message, exception)
@@ -73,19 +76,13 @@ public class Logger : IDisposable
             new LogEntry(GetTimestamp(), LogType.Critical, message, exception)
         );
 
-        lock (_logLock)
-        {
-            foreach (StreamWriter writer in _logWriters.Values)
-            {
-                writer.Flush();
-            }
-        }
-
+        FlushLogs(null);
         return new Exception(message, exception);
     }
 
     public void Dispose()
     {
+        _flushTimer?.Dispose();
         _logChannel.Writer.Complete();
 
         lock (_logLock)
@@ -119,11 +116,11 @@ public class Logger : IDisposable
     {
         await foreach (LogEntry entry in _logChannel.Reader.ReadAllAsync())
         {
-            WriteToFile(entry.Timestamp, entry.Type, entry.Message, entry.Exception);
+            WriteLog(entry.Timestamp, entry.Type, entry.Message, entry.Exception);
         }
     }
 
-    private void WriteToFile(DateTime timestamp, LogType type, string message, Exception? exception)
+    private void WriteLog(DateTime timestamp, LogType type, string message, Exception? exception)
     {
         try
         {
@@ -139,10 +136,7 @@ public class Logger : IDisposable
                 StreamWriter globalWriter = GetWriter(globalFile);
 
                 specificWriter.WriteLine(logString);
-                specificWriter.Flush();
-
                 globalWriter.WriteLine(logString);
-                globalWriter.Flush();
             }
         }
         catch (Exception ex)
@@ -151,20 +145,34 @@ public class Logger : IDisposable
         }
     }
 
-    private StreamWriter GetWriter(string fileName) =>
-        _logWriters.GetOrAdd(
-            fileName,
-            key =>
+    private void FlushLogs(object? state)
+    {
+        lock (_logLock)
+        {
+            foreach (StreamWriter writer in _logWriters.Values)
             {
-                if (!Directory.Exists(_path))
-                {
-                    _ = Directory.CreateDirectory(_path);
-                }
-
-                string filePath = Path.Combine(_path, key);
-                return new StreamWriter(filePath, append: true);
+                writer.Flush();
             }
-        );
+        }
+    }
+
+    private StreamWriter GetWriter(string fileName)
+    {
+        if (_logWriters.TryGetValue(fileName, out StreamWriter? writer))
+        {
+            return writer;
+        }
+
+        if (!Directory.Exists(_path))
+        {
+            _ = Directory.CreateDirectory(_path);
+        }
+
+        string filePath = Path.Combine(_path, fileName);
+        _logWriters[fileName] = new StreamWriter(filePath, append: true);
+
+        return _logWriters[fileName];
+    }
 
     private string FormatDate(DateTime timestamp)
     {
