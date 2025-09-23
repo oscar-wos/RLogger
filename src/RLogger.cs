@@ -17,6 +17,7 @@ public class Logger : IDisposable
     private readonly object _logLock = new();
     private readonly Channel<LogEntry> _logChannel = Channel.CreateUnbounded<LogEntry>();
     private readonly Dictionary<string, StreamWriter> _logWriters = [];
+    private readonly HashSet<StreamWriter> _dirtyWriters = [];
 
     private DateOnly _cachedDate = DateOnly.FromDateTime(DateTime.Now);
     private string _cachedDateString = DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd");
@@ -30,7 +31,7 @@ public class Logger : IDisposable
 
         _updateInterval = Stopwatch.Frequency / 1000 * accuracy;
         _flushTimer = new Timer(FlushLogs, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
-        _timeFormatter = GetTimeFormat(accuracy);
+        _timeFormatter = GetTimeFormatter(accuracy);
 
         _ = Task.Run(WriteLogs);
     }
@@ -40,7 +41,7 @@ public class Logger : IDisposable
         _logger?.LogDebug(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
-            new LogEntry(GetTimeString(), LogType.Debug, message, exception)
+            new LogEntry(GetTimestamp(), LogType.Debug, message, exception)
         );
     }
 
@@ -49,7 +50,7 @@ public class Logger : IDisposable
         _logger?.LogInformation(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
-            new LogEntry(GetTimeString(), LogType.Information, message, exception)
+            new LogEntry(GetTimestamp(), LogType.Information, message, exception)
         );
     }
 
@@ -58,7 +59,7 @@ public class Logger : IDisposable
         _logger?.LogWarning(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
-            new LogEntry(GetTimeString(), LogType.Warning, message, exception)
+            new LogEntry(GetTimestamp(), LogType.Warning, message, exception)
         );
     }
 
@@ -67,14 +68,14 @@ public class Logger : IDisposable
         _logger?.LogError(exception, "{message}", message);
 
         _ = _logChannel.Writer.TryWrite(
-            new LogEntry(GetTimeString(), LogType.Error, message, exception)
+            new LogEntry(GetTimestamp(), LogType.Error, message, exception)
         );
     }
 
     public Exception Critical(string message, Exception? exception = null)
     {
         _ = _logChannel.Writer.TryWrite(
-            new LogEntry(GetTimeString(), LogType.Critical, message, exception)
+            new LogEntry(GetTimestamp(), LogType.Critical, message, exception)
         );
 
         FlushLogs(null);
@@ -95,12 +96,13 @@ public class Logger : IDisposable
             }
 
             _logWriters.Clear();
+            _dirtyWriters.Clear();
         }
 
         GC.SuppressFinalize(this);
     }
 
-    private string GetTimeString()
+    private string GetTimestamp()
     {
         long currentTimestamp = Stopwatch.GetTimestamp();
 
@@ -140,9 +142,11 @@ public class Logger : IDisposable
 
                 string specificFile = $"{_cachedDateString}_{type}.log";
                 StreamWriter specificWriter = GetWriter(specificFile);
+                _ = _dirtyWriters.Add(specificWriter);
 
                 string globalFile = $"{_cachedDateString}_All.log";
                 StreamWriter globalWriter = GetWriter(globalFile);
+                _ = _dirtyWriters.Add(globalWriter);
 
                 specificWriter.WriteLine(logString);
                 globalWriter.WriteLine(logString);
@@ -158,10 +162,12 @@ public class Logger : IDisposable
     {
         lock (_logLock)
         {
-            foreach (StreamWriter writer in _logWriters.Values)
+            foreach (StreamWriter writer in _dirtyWriters)
             {
                 writer.Flush();
             }
+
+            _dirtyWriters.Clear();
         }
     }
 
@@ -191,7 +197,7 @@ public class Logger : IDisposable
     ) =>
         $"[{_cachedDateString} {timestamp}] [{type}] {message}{(exception is { } ? $"\n{exception}" : "")}";
 
-    private static Func<TimeOnly, string> GetTimeFormat(uint accuracy) =>
+    private static Func<TimeOnly, string> GetTimeFormatter(uint accuracy) =>
         accuracy switch
         {
             <= 9 => time => time.ToString("HH:mm:ss.fff"),
