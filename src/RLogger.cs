@@ -87,18 +87,7 @@ public class Logger : IDisposable
         _flushTimer?.Dispose();
         _logChannel.Writer.Complete();
 
-        lock (_logLock)
-        {
-            foreach (StreamWriter streamWriter in _logWriters.Values)
-            {
-                streamWriter.Flush();
-                streamWriter.Dispose();
-            }
-
-            _logWriters.Clear();
-            _hasDirtyWriters = false;
-        }
-
+        ClearWriters();
         GC.SuppressFinalize(this);
     }
 
@@ -115,6 +104,8 @@ public class Logger : IDisposable
             {
                 _cachedDate = date;
                 _cachedDateString = date.ToString("yyyy-MM-dd");
+
+                ClearWriters();
             }
 
             _cachedTimeString = _timeFormatter(TimeOnly.FromDateTime(dateTime));
@@ -192,6 +183,21 @@ public class Logger : IDisposable
         _logWriters[fileName] = new StreamWriter(filePath, append: true);
 
         return _logWriters[fileName];
+    }
+
+    private void ClearWriters()
+    {
+        lock (_logLock)
+        {
+            foreach (StreamWriter streamWriter in _logWriters.Values)
+            {
+                streamWriter.Flush();
+                streamWriter.Dispose();
+            }
+
+            _logWriters.Clear();
+            _hasDirtyWriters = false;
+        }
     }
 
     private string FormatLog(
