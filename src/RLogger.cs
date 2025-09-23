@@ -17,7 +17,7 @@ public class Logger : IDisposable
     private readonly object _logLock = new();
     private readonly Channel<LogEntry> _logChannel = Channel.CreateUnbounded<LogEntry>();
     private readonly Dictionary<string, StreamWriter> _logWriters = [];
-    private readonly HashSet<StreamWriter> _dirtyWriters = [];
+    private bool _hasDirtyWriters = false;
 
     private DateOnly _cachedDate = DateOnly.FromDateTime(DateTime.Now);
     private string _cachedDateString = DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd");
@@ -96,7 +96,7 @@ public class Logger : IDisposable
             }
 
             _logWriters.Clear();
-            _dirtyWriters.Clear();
+            _hasDirtyWriters = false;
         }
 
         GC.SuppressFinalize(this);
@@ -142,14 +142,14 @@ public class Logger : IDisposable
 
                 string specificFile = $"{_cachedDateString}_{type}.log";
                 StreamWriter specificWriter = GetWriter(specificFile);
-                _ = _dirtyWriters.Add(specificWriter);
 
                 string globalFile = $"{_cachedDateString}_All.log";
                 StreamWriter globalWriter = GetWriter(globalFile);
-                _ = _dirtyWriters.Add(globalWriter);
 
                 specificWriter.WriteLine(logString);
                 globalWriter.WriteLine(logString);
+
+                _hasDirtyWriters = true;
             }
         }
         catch (Exception ex)
@@ -160,14 +160,19 @@ public class Logger : IDisposable
 
     private void FlushLogs(object? state)
     {
+        if (!_hasDirtyWriters)
+        {
+            return;
+        }
+
         lock (_logLock)
         {
-            foreach (StreamWriter writer in _dirtyWriters)
+            foreach (StreamWriter writer in _logWriters.Values)
             {
                 writer.Flush();
             }
 
-            _dirtyWriters.Clear();
+            _hasDirtyWriters = false;
         }
     }
 
