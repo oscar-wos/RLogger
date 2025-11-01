@@ -12,9 +12,10 @@ using RLogger;
 
 private Logger? _logger;
 
+ // CounterStrikeSharp
 public override void Load(bool hotReload)
 {
-    string logPath = Path.Join(Server.GameDirectory, "csgo", "logs", "Plugin");
+    string logPath = Path.Join(Server.GameDirectory, "logs", "MyPlugin");
     
     // Will only output to files
     _logger = new Logger(logPath);
@@ -22,6 +23,22 @@ public override void Load(bool hotReload)
     // Will output to files & console
     // CounterStrikeSharp - BasePlugin.Logger
     _logger = new Logger(logPath, logger: Logger);
+
+    // Changes how often in ms to update DateTime timestamp
+    _logger = new Logger(logPath, accuracy: 1);
+}
+
+ // SwiftlyS2
+public override void Load(bool hotReload)
+{
+    string logPath = Path.Join(Core.GameDirectory, "logs", "MyPlugin");
+    
+    // Will only output to files
+    _logger = new Logger(logPath);
+
+    // Will output to files & console
+    // SwiftlyS2 - Core.Logger
+    _logger = new Logger(logPath, logger: Core.Logger);
 
     // Changes how often in ms to update DateTime timestamp
     _logger = new Logger(logPath, accuracy: 1);
